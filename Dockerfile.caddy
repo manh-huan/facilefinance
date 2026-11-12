@@ -1,0 +1,14 @@
+# Stage 1: build the web app to static files.
+FROM node:22-slim AS web
+WORKDIR /repo
+COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
+RUN cd apps/web && npm ci
+COPY apps/web ./apps/web
+# The web app reads the shared i18n catalogs from /locales at build time.
+COPY locales ./locales
+RUN cd apps/web && npm run build
+
+# Stage 2: Caddy serves the static files and proxies /api to the API.
+FROM caddy:2
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY --from=web /repo/apps/web/dist /srv
