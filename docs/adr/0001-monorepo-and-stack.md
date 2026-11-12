@@ -21,7 +21,7 @@ auditable (every number traceable) and fully bilingual (English and Vietnamese).
 - **Frontend:** React, TypeScript, Vite, TanStack Table, ECharts, react-i18next; API client
   generated from the OpenAPI schema.
 - **AI:** Anthropic Python SDK, imported only from `src/facilefinance/ai/`.
-- **Deployment:** Docker Compose on one VPS with Caddy in front.
+- **Deployment:** Docker Compose on one VPS with nginx in front.
 - **Quality:** ruff, mypy (`--strict` on `src/`), pytest; eslint, tsc, vitest.
 
 ## Consequences

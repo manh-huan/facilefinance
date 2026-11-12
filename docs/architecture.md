@@ -5,8 +5,8 @@ components land.
 
 ## Overview
 
-FacileFinance is a modular monolith deployed with Docker Compose on one VPS, behind Caddy.
-There is one user; authentication is handled by an external access layer in front of Caddy,
+FacileFinance is a modular monolith deployed with Docker Compose on one VPS, behind nginx.
+There is one user; authentication is handled by an external access layer in front of nginx,
 so the app contains no login code.
 
 ```
@@ -49,7 +49,7 @@ mismatch or stray digits. Both versions are stored and approved together.
 
 ## Deployment
 
-Docker Compose: `db` (PostgreSQL 16), `api`, `worker`, `caddy`; the web app is built to
-static files served by Caddy.
+Docker Compose: `db` (PostgreSQL 16), `api`, `worker`, `nginx`; the web app is built to
+static files served by nginx.
 
 See [adr/0001-monorepo-and-stack.md](adr/0001-monorepo-and-stack.md) for the stack decision.

@@ -88,7 +88,7 @@ Package and code name: `facilefinance` (Python package, Docker images, database 
 row-level security, sign-up, roles and permissions, billing, Zalo notifications, product
 costing, financial statements, tax filing.
 There is one user. Authentication is handled by an external access layer in front of
-Caddy (private network or access proxy); the app has no login code.
+nginx (private network or access proxy); the app has no login code.
 
 ## 4. Non-negotiable principles
 
@@ -111,7 +111,7 @@ Caddy (private network or access proxy); the app has no login code.
 
 | Area | Choice |
 |---|---|
-| Backend language | Python 3.12, managed with `uv` |
+| Backend language | Python 3.14, managed with `uv` (`requires-python = ">=3.14"`, Docker base `python:3.14-slim`) |
 | API | FastAPI, Pydantic v2 |
 | Excel read / write | `python-calamine` (reads .xlsx/.xlsm/.xlsb/.xls), `openpyxl` (fills templates, keeps formatting) |
 | Data frames | Polars |
@@ -122,7 +122,7 @@ Caddy (private network or access proxy); the app has no login code.
 | AI | Anthropic Python SDK, called only from `src/facilefinance/ai/` |
 | Email | Transactional SMTP provider, configured via `.env` |
 | Quality | `ruff`, `mypy`, `pytest`; frontend `eslint`, `tsc`, `vitest` |
-| Deployment | Docker Compose on one VPS, Caddy in front |
+| Deployment | Docker Compose on one VPS, nginx in front |
 
 Do not add Kubernetes, microservices, Kafka, Redis, vector databases or heavy agent
 frameworks. Any new dependency needs a one-line justification in the PR.
@@ -136,10 +136,11 @@ facilefinance/
 ├── README.vi.md             # Vietnamese
 ├── pyproject.toml
 ├── docker-compose.yml
-├── Caddyfile
+├── nginx.conf
 ├── .env.example
 ├── docs/
 │   ├── architecture.md
+│   ├── data-formats.md      # structure and quirks of the real input files (no real data)
 │   └── adr/                 # architecture decision records: 0001-<title>.md
 ├── locales/                 # shared i18n catalogs (web + email)
 │   ├── en/*.json
@@ -272,27 +273,45 @@ together if setup or usage changed; this file updated if layout or commands chan
 
 ## 13. Bootstrap (first task)
 
-One commit per step, in order:
+One commit per step, in order. Read `docs/data-formats.md` before steps 4–7.
 
 1. Create the layout from section 6; `pyproject.toml` with `uv`, `ruff`, `mypy`, `pytest`.
+   Add all core dependencies from section 5 and run `uv sync` on Python 3.14 first; if any
+   package lacks 3.14 support, stop and report which one before choosing a fallback.
 2. `README.md` and `README.vi.md` (purpose, setup, commands), cross-linked;
    `docs/architecture.md`; `docs/adr/0001-monorepo-and-stack.md`.
-3. `docker-compose.yml`: `db` (PostgreSQL 16), `api`, `worker`, `caddy`; `web` built to static
-   files served by Caddy.
-4. `src/facilefinance/db`: models for section 7, first Alembic migration.
-5. `config/models.toml`, sample `config/file_maps/*.v1.yaml`, `.env.example`.
+3. `docker-compose.yml`: `db` (PostgreSQL 16), `api`, `worker`, `nginx`; `web` built to static
+   files served by nginx.
+4. `src/facilefinance/db`: models and the first Alembic migration for the **import tables
+   only**: `settings`, `source_files`, `file_mappings`, `counterparties`, `loans`,
+   `credit_lines`, `ledger_items`. Show the models for review before generating the migration.
+   Other tables are added later, each with its own migration, when its feature is built.
+5. `config/models.toml`, `config/file_maps/*.v1.yaml` for loans, payables and receivables
+   (based on `docs/data-formats.md`), `.env.example`.
 6. `data/sample/`: script generating three synthetic Excel files (loans, payables,
-   receivables) with grand-total cells.
-7. `src/facilefinance/importers`: read the samples via file maps; total-match tests.
+   receivables) that reproduce the structure and the quirks listed in `docs/data-formats.md`
+   (junk sheets, multi-row headers, misleading column names, grand-total rows, mixed date
+   cells). Synthetic names and amounts only.
+7. Importers, in two parts:
+   - **7a. Pure readers** in `src/facilefinance/importers`: file + file map in, Pydantic
+     records (`LoanRecord`, `LedgerRecord`, `ImportReport`) out. No database access.
+     Tests: totals match each file's grand-total cell; every quirk in `docs/data-formats.md`
+     has a test; unreadable cells are reported with file, sheet, row and reason.
+   - **7b. Persistence**: a thin function that writes records to the step-4 tables, tested
+     against PostgreSQL in Docker. If a needed column is missing, add a new migration.
 8. `apps/api`: `/health` and one endpoint returning imported data (codes and raw values only);
    OpenAPI enabled; error envelope from section 2.
 9. `apps/web`: Vite + React + TS, react-i18next with `en` and `vi`, EN / VI switcher in the
    header (initial choice from browser language), `/api` proxy, generated client, one page
    listing imported data with `Intl` formatting.
 10. `locales/`: `common` and `errors` namespaces in both languages; `i18n:check` script.
-11. `src/facilefinance/ai`: client wrapper, `ai_calls` logging, `models.toml` loading; one
-    test with a mocked client (no real API calls in tests).
+11. `src/facilefinance/ai`: client wrapper, `ai_calls` table and migration, `models.toml`
+    loading; one test with a mocked client (no real API calls in tests).
 12. GitHub Actions: lint, type check, tests, i18n check for Python and web.
+
+Later tables, added with their features: `rules`, `forecast_runs`, `cash_events`,
+`bank_balances` (rule engine and forecast); `assistant_questions`; `recipients`, `reports`,
+`alerts` (notifications and board report); `audit_log`.
 
 ## 14. Glossary (Vietnamese domain terms → system names)
 
