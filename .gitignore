@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.env
+node_modules/
+dist/
+# Real data never enters the repo (CLAUDE.md section 4.6)
+*.xls
+*.xlsm
+*.xlsb
+!data/sample/*.xlsx
