@@ -98,7 +98,7 @@ nginx (private network or access proxy); the app has no login code.
 2. **AI interprets and asks; code computes.** Every number (payroll, forecast, totals) is
    computed by Python. Claude only proposes file maps, calls tools, explains, drafts reports
    and asks questions. Claude never produces a number that enters the forecast.
-3. **Every number is traceable.** Each `cash_event` stores `ledger_item_id` or `loan_id`
+3. **Every number is traceable.** Each `cash_event` stores `ledger_item_id` or `loan_snapshot_id`
    and the exact `rule_id` version. Each `ledger_item` stores `source_ref` (file, sheet, row).
 4. **Never invent business rules.** An uncovered case creates an `assistant_question`, uses
    the declared default, and is flagged as an assumption. The same applies to Claude Code:
@@ -175,23 +175,32 @@ Inside the core, only `ai/` may import `anthropic`.
 
 Money: `bigint` in VND, never floats. Dates: `date`. Instants: `timestamptz`.
 
-- `settings` — minimum balance, timezone, default locale for new recipients.
+- `settings` — single row (`id = 1`): `min_balance_vnd` (NULL until configured), `timezone`, `default_recipient_language` (`en` | `vi` | `bilingual`; default for new recipients, not the UI locale).
 - `recipients` — name, email, `language` (`en` | `vi` | `bilingual`), which alerts and reports they receive.
-- `source_files` — uploaded file: type, name, sha256, `mapping_id`, uploaded_at. Originals are not retained long-term.
-- `file_mappings` — `file_type`, `version`, `spec` (jsonb), status `proposed` | `confirmed`.
-- `counterparties` — `kind` (`supplier` | `customer` | `bank`), `code`, `name`, `attrs` jsonb.
-- `loans` — bank, loan code, outstanding, rate, disbursed_on, due_on.
-- `credit_lines` — credit limit per bank.
-- `ledger_items` — rows read from files: `kind` (`payable` | `receivable`), counterparty, period, amount, `source_ref` jsonb.
+- `source_files` — one row per import: `file_type`, `filename`, `sha256`, `mapping_id`, `as_of` (period the data refers to, not upload time), `import_report` jsonb (totals read vs file totals, match flag, warnings), `uploaded_at`. Unique `(sha256, mapping_id)`. Originals are not retained long-term.
+- `file_mappings` — `file_type`, `version`, `spec` (jsonb), status `proposed` | `confirmed`. Unique `(file_type, version)`.
+- `counterparties` — `kind` (`supplier` | `customer` | `bank`), `code`, `name` (as displayed), `name_key`, `attrs` jsonb. `name_key` = NFC, trimmed, whitespace-collapsed, casefolded; diacritics are never stripped. Identity: `(kind, code)` when a code exists (suppliers), otherwise `(kind, name_key)`.
+- `loans` — stable identity only: bank (counterparty), `loan_code` (text), `purpose`, `disbursed_on`. Unique `(bank_id, loan_code)`.
+- `loan_snapshots` — one scheduled principal repayment of a loan as seen in one file: `loan_id`, `source_file_id`, `due_on`, `principal_vnd`, `repaid_vnd`, `outstanding_vnd`, `interest_rate_pct` numeric(6,3), `source_ref` jsonb. Unique `(loan_id, source_file_id, due_on)`. Never updated; `cash_events` will reference `loan_snapshots`, not `loans`.
+- `credit_lines` — credit limit per bank, `effective_from`; a new limit is a new row.
+- `ledger_items` — rows read from files: `kind` (`payable` | `receivable`), counterparty, `period` (first day of the month), `amount_vnd`, `site_code` and `expected_collection_day` (receivables only), `source_file_id`, `source_ref` jsonb. Unique `(source_file_id, kind, counterparty_id, site_code, period)` with NULLS NOT DISTINCT. No rows for zero amounts.
 - `rules` — `rule_key`, `version`, `params` jsonb, `scope` jsonb, effective_from / effective_to, source, confirmed_by.
 - `forecast_runs` — as_of, opening_balance, `scenario` jsonb.
 - `cash_events` — `forecast_run_id`, date, amount, `direction` (`in` | `out`), category, counterparty,
-  `certainty` (`confirmed` | `expected`), `ledger_item_id` | `loan_id`, `rule_id`, approval status.
+  `certainty` (`confirmed` | `expected`), `ledger_item_id` | `loan_snapshot_id`, `rule_id`, approval status.
 - `bank_balances` — balance per account per date.
 - `assistant_questions` — question, context, options, answer, `resulting_rule_id`.
 - `ai_calls` — feature, model, input / output / cache tokens, cost, latency, prompt version.
 - `reports` — `forecast_run_id`, `locale`, placeholder draft, rendered body, status, approved_by; one row per locale, approved together.
 - `alerts` — what was sent, to whom, in which language; `audit_log`.
+
+**Imports are snapshots, never upserts.** Every `ledger_items` and `loan_snapshots` row keeps its `source_file_id`. "Current state" is the latest import per `file_type`, exposed by the views `current_source_files`, `current_loan_snapshots` and `current_ledger_items` (not tables).
+
+**Re-upload rule.** Same file + same mapping version (`sha256`, `mapping_id`): idempotent; return the existing `source_file` with an `already_imported` notice. Same file + newer mapping version: allowed, creates a new snapshot (this is how a wrong mapping is fixed).
+
+**Importer rules (recorded in `import_report`).**
+- Loans: same code + same `due_on` twice in one file with identical amounts: deduplicate and note it. Same code + same `due_on` with different amounts: report a conflict and skip both rows until a human resolves it. Same code + different `due_on`: store both. Fully repaid loans (outstanding 0) are skipped; `principal = repaid + outstanding` is checked as a warning, not enforced by the database.
+- Counterparties: when two different raw spellings map to the same `name_key` in one import, add a warning listing both spellings so a wrong merge is visible.
 
 When going multi-tenant later: add `company_id` (default = current company) plus RLS.
 Do not prepare for it now.
@@ -247,10 +256,10 @@ Do not prepare for it now.
 ```bash
 uv sync                                     # install Python deps
 docker compose up -d db                     # start PostgreSQL
-uv run alembic upgrade head                 # migrate
+uv run alembic upgrade head                 # migrate (DATABASE_URL must be set)
 uv run uvicorn apps.api.main:app --reload   # API on :8000
 cd apps/web && npm install && npm run dev   # web on :5173, proxies /api → :8000
-uv run pytest                               # tests
+uv run pytest                               # tests (DB tests need FACILEFINANCE_TEST_DATABASE_URL, db name *_test)
 uv run python -m evals.run                  # evals
 uv run ruff check . && uv run mypy src      # lint + types
 cd apps/web && npm run i18n:check           # verify en/vi keys match

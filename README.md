@@ -54,6 +54,11 @@ cd apps/web && npm run i18n:check           # verify en/vi keys match
 Some commands only work once the matching bootstrap step in CLAUDE.md section 13 is done
 (database, API, web, evals).
 
+Database tests (schema, constraints, views) run only when `FACILEFINANCE_TEST_DATABASE_URL`
+points to a PostgreSQL database whose name ends in `_test`; its `public` schema is dropped and
+recreated. Without the variable they are skipped. `DATABASE_URL` must be set for
+`alembic` commands.
+
 ## Data policy
 
 No real data in the repository. Real Excel files stay outside it; tests, evals and demos use

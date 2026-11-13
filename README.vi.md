@@ -54,6 +54,11 @@ cd apps/web && npm run i18n:check           # kiểm tra khóa en/vi khớp nhau
 Một số lệnh chỉ chạy được sau khi hoàn thành bước khởi tạo tương ứng trong CLAUDE.md mục 13
 (cơ sở dữ liệu, API, web, evals).
 
+Các kiểm thử cơ sở dữ liệu (schema, ràng buộc, view) chỉ chạy khi biến
+`FACILEFINANCE_TEST_DATABASE_URL` trỏ tới một database PostgreSQL có tên kết thúc bằng `_test`;
+schema `public` của database này sẽ bị xóa và tạo lại. Nếu không đặt biến, các kiểm thử này bị bỏ
+qua. Cần đặt `DATABASE_URL` khi chạy các lệnh `alembic`.
+
 ## Chính sách dữ liệu
 
 Không có dữ liệu thật trong repository. File Excel thật được giữ bên ngoài; kiểm thử, evals
