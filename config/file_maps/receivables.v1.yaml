@@ -1,0 +1,62 @@
+# Accounts receivable. See config/file_maps/README.md and docs/data-formats.md section 3.
+file_type: receivables
+version: 1
+status: proposed
+formats: [xlsx]
+
+as_of:
+  source: parameter
+
+sheets:
+  select:
+    by: name_template
+    # One sheet per month, e.g. "T11.2026"; names are compared after trimming ("T4.2026 ").
+    # Older sheets without a year ("T7", "T8") are not supported until the naming is confirmed.
+    template: "T{month}.{year}"
+    parameters: [month, year]
+    trim: true
+  read_columns: up_to_last_header     # some sheets report ~16,000 empty columns
+
+table:
+  header_row:
+    contains_all:
+      - "Tên khách hàng"
+      - "TK công nợ"
+      - "Số dư cuối kỳ"
+
+  columns:
+    customer_name:           {header: "Tên khách hàng", type: text}
+    ledger_account:          {header: "TK công nợ", type: text, required: false}
+    closing_balance_vnd:     {header: "Số dư cuối kỳ", type: integer_vnd, empty_as: 0}
+    site_code:               {header: "Note", type: text, required: false}
+    expected_collection_day: {header: "Ngày thu dự kiến", type: integer, required: false}   # day of month; often empty
+
+  # One amount per service month; the year sits two rows above the header row
+  # (row 2 holds running numbers and is ignored).
+  month_columns:
+    header_pattern: '^\d{1,2}$'
+    year_row_offset: -2
+    type: integer_vnd
+    empty_as: 0
+
+  end:
+    total_row:
+      label: "Tổng"
+      label_column: any_column
+      value_column: "Số dư cuối kỳ"
+      verify: {field: closing_balance_vnd, check: sum_equals_total}
+
+  # (customer, site) identifies a receivable line; the same customer may repeat across sites.
+  duplicates:
+    key: [customer_name, site_code]
+    identical: merge
+    conflict: skip_all_and_report
+
+emit:
+  record: ledger_item
+  kind: receivable
+  counterparty: {kind: customer, name: customer_name}     # no code: identified by name_key
+  amount: month_cell
+  period: month_column
+  site_code: site_code
+  expected_collection_day: expected_collection_day

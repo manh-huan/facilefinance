@@ -1,0 +1,62 @@
+# Accounts payable. See config/file_maps/README.md and docs/data-formats.md section 2.
+file_type: payables
+version: 1
+status: proposed
+formats: [xlsb]            # binary Excel, read by python-calamine
+
+as_of:
+  source: parameter
+
+sheets:
+  select:
+    by: header_row         # the main sheet is named after the period; find it by its header
+    multiple: false        # several matches are an error, never a guess
+  skip_when: {min_rows: 2, min_cols: 2}     # "foxz_N" junk sheets hold a single cell
+
+table:
+  header_row:
+    contains_all:
+      - "Suppliers"
+      - "MÃ HÀNG HÓA"
+      - "MST"
+      - "Tên khách hàng"
+      - "Total"
+
+  columns:
+    supplier_code: {header: "Suppliers", type: text}
+    category:      {header: "MÃ HÀNG HÓA", type: text, required: false}   # category, not a product code
+    tax_id:        {header: "MST", type: text, required: false}           # keep leading zeros
+    supplier_name: {header: "Tên khách hàng", type: text}                 # the header says "customer"; it is the supplier
+    total_vnd:     {header: "Total", type: integer_vnd, empty_as: 0}
+
+  # One amount per month; the year sits two rows above the header row.
+  month_columns:
+    header_pattern: '^\d{1,2}$'
+    year_row_offset: -2
+    type: integer_vnd
+    empty_as: 0
+
+  # Category rows (e.g. "CAR RENTAL") have no supplier code and only zeros.
+  skip_rows:
+    - reason: group_label
+      when: {field: supplier_code, not_matching: '^NCC_\d{4}$'}
+
+  # The "Tổng" row currently contains #REF! errors: compute the total, warn about the cell.
+  end:
+    total_row:
+      label: "Tổng"
+      label_column: any_column
+      value_column: "Total"
+      verify: {field: total_vnd, check: sum_equals_total, if_total_unreadable: warn_only}
+
+  duplicates:
+    key: [supplier_code]
+    identical: merge
+    conflict: skip_all_and_report
+
+emit:
+  record: ledger_item
+  kind: payable
+  counterparty: {kind: supplier, code: supplier_code, name: supplier_name, attrs: [category, tax_id]}
+  amount: month_cell
+  period: month_column     # first day of the month, from the month and year headers

@@ -1,0 +1,59 @@
+# Bank loan maturity report. See config/file_maps/README.md and docs/data-formats.md section 1.
+file_type: loans
+version: 1
+status: proposed
+formats: [xlsx]
+
+as_of:
+  source: parameter
+
+sheets:
+  select:
+    by: name_contains
+    text: maturity          # "MATURITY DEC 2026" and "Maturity Nov 2026"
+    case_sensitive: false
+    multiple: true          # the report spans several monthly sheets
+  skip_when: {min_rows: 2, min_cols: 2}
+
+table:
+  # The summary tables on the same sheet share some headers but not all of these.
+  header_row:
+    contains_all:
+      - "Ngân hàng"
+      - "Nội dung khoản vay"
+      - "Mã khoản vay"
+      - "Ngày đáo hạn"
+      - "Số tiền vay"
+      - "Đã trả"
+      - "Gốc còn phải trả"
+
+  columns:
+    bank:            {header: "Ngân hàng", type: text}
+    purpose:         {header: "Nội dung khoản vay", type: text, required: false}
+    loan_code:       {header: "Mã khoản vay", type: text}      # numeric-looking codes stay text
+    due_on:          {header: "Ngày đáo hạn", type: date}
+    principal_vnd:   {header: "Số tiền vay", type: integer_vnd, required: false}
+    repaid_vnd:      {header: "Đã trả", type: integer_vnd, empty_as: 0}
+    outstanding_vnd: {header: "Gốc còn phải trả", type: integer_vnd}
+
+  # Verification uses every detail row, before fully repaid loans are skipped.
+  end:
+    total_row:
+      label: "TỔNG CỘNG"
+      label_column: "Đã trả"            # the label is not in the first column
+      value_column: "Gốc còn phải trả"
+      verify: {field: outstanding_vnd, check: sum_equals_total}
+
+  skip_rows:
+    - reason: fully_repaid
+      when: {field: outstanding_vnd, equals: 0}
+
+  # The same loan can appear in two monthly sheets; one code may have several maturity dates.
+  duplicates:
+    key: [loan_code, due_on]
+    identical: merge
+    conflict: skip_all_and_report
+
+emit:
+  record: loan_snapshot
+  bank: {counterparty_kind: bank, name: bank}
